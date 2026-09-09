@@ -16,6 +16,7 @@ dist-ssr
 dist.zip
 server-deploy.zip
 state.json
+data/
 
 # Editor directories and files
 .vscode/*

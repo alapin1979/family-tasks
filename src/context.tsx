@@ -3,7 +3,7 @@ import type { AppState, Child, Task, TaskCompletion, Reward, RewardClaim, Manual
 import { getScheduledDatesBefore, todayStr } from './utils';
 
 const defaultState: AppState = {
-  parentPin: '1234',
+  parentPin: '',
   children: [],
   tasks: [],
   completions: [],
@@ -14,18 +14,41 @@ const defaultState: AppState = {
   taskEditLog: [],
 };
 
-async function fetchState(): Promise<AppState> {
-  const res = await fetch('/api/state');
-  const data = await res.json();
-  return { ...defaultState, ...data };
+const TOKEN_KEY = 'family_token';
+const LOGIN_KEY = 'family_login';
+
+export function getFamilyToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
 }
 
-async function pushState(state: AppState): Promise<void> {
-  await fetch('/api/state', {
+export function getFamilyLogin(): string | null {
+  return localStorage.getItem(LOGIN_KEY);
+}
+
+export function saveFamilySession(token: string, login: string) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(LOGIN_KEY, login);
+}
+
+export function clearFamilySession() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(LOGIN_KEY);
+}
+
+async function fetchState(token: string): Promise<{ data: AppState | null; unauthorized: boolean }> {
+  const res = await fetch('/api/state', { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 401) return { data: null, unauthorized: true };
+  const data = await res.json();
+  return { data: { ...defaultState, ...data }, unauthorized: false };
+}
+
+async function pushState(state: AppState, token: string): Promise<boolean> {
+  const res = await fetch('/api/state', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(state),
   });
+  return res.status === 401;
 }
 
 export type CompletionStatus = 'none' | 'pending' | 'approved' | 'denied';
@@ -94,22 +117,32 @@ function penaltyForDate(task: Task, date: string): number {
   return task.penalty;
 }
 
-export function AppProvider({ children: reactChildren }: { children: React.ReactNode }) {
+export function AppProvider({ children: reactChildren, onAuthError }: { children: React.ReactNode; onAuthError: () => void }) {
   const [state, setState] = useState<AppState>(defaultState);
   const [loaded, setLoaded] = useState(false);
   const savePending = useRef(false);
 
   useEffect(() => {
-    fetchState()
-      .then(data => { setState(data); setLoaded(true); })
+    const token = getFamilyToken();
+    if (!token) { onAuthError(); return; }
+    fetchState(token)
+      .then(({ data, unauthorized }) => {
+        if (unauthorized) { clearFamilySession(); onAuthError(); return; }
+        if (data) setState(data);
+        setLoaded(true);
+      })
       .catch(() => setLoaded(true));
   }, []);
 
   useEffect(() => {
     if (!loaded) return;
+    const token = getFamilyToken();
+    if (!token) return;
     savePending.current = true;
     const timer = setTimeout(() => {
-      pushState(state).finally(() => { savePending.current = false; });
+      pushState(state, token)
+        .then(unauthorized => { if (unauthorized) { clearFamilySession(); onAuthError(); } })
+        .finally(() => { savePending.current = false; });
     }, 300);
     return () => { clearTimeout(timer); };
   }, [state, loaded]);
@@ -117,9 +150,12 @@ export function AppProvider({ children: reactChildren }: { children: React.React
   useEffect(() => {
     const interval = setInterval(() => {
       if (savePending.current) return;
-      fetchState()
-        .then(data => {
-          if (!savePending.current) {
+      const token = getFamilyToken();
+      if (!token) return;
+      fetchState(token)
+        .then(({ data, unauthorized }) => {
+          if (unauthorized) { clearFamilySession(); onAuthError(); return; }
+          if (!savePending.current && data) {
             setState(prev =>
               JSON.stringify(prev) !== JSON.stringify(data) ? data : prev
             );
