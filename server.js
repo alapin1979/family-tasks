@@ -6,9 +6,11 @@ import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import {
   ensureDataDirs,
   loadAccounts,
+  saveAccounts,
   createAccount,
   findAccountByLogin,
   verifyPassword,
+  hashPassword,
   loadFamilyState,
   saveFamilyState,
   DATA_DIR,
@@ -107,6 +109,47 @@ app.put('/api/state', requireAuth, (req, res) => {
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
+});
+
+// ---------- account (self-service credential change) ----------
+
+// A logged-in family changes its own login and/or password. The familyId
+// (and therefore the family's data file and existing token) is never changed,
+// so the caller stays logged in and no data migration is needed.
+app.put('/api/account', requireAuth, (req, res) => {
+  const { currentPassword, newLogin, newPassword } = req.body || {};
+
+  const accounts = loadAccounts();
+  const account = accounts.find(a => a.id === req.familyId);
+  if (!account) return res.status(401).json({ error: 'unauthorized' });
+
+  if (typeof currentPassword !== 'string' || !verifyPassword(currentPassword, account.passwordHash)) {
+    return res.status(401).json({ error: 'invalid_password' });
+  }
+
+  const wantsLogin = typeof newLogin === 'string' && newLogin.trim() !== '';
+  const wantsPassword = typeof newPassword === 'string' && newPassword !== '';
+  if (!wantsLogin && !wantsPassword) {
+    return res.status(400).json({ error: 'invalid_input' });
+  }
+  if (wantsPassword && newPassword.length < 4) {
+    return res.status(400).json({ error: 'weak_password' });
+  }
+
+  if (wantsLogin) {
+    const nextLoginLower = newLogin.trim().toLowerCase();
+    if (nextLoginLower !== account.loginLower && accounts.some(a => a.loginLower === nextLoginLower)) {
+      return res.status(409).json({ error: 'login_taken' });
+    }
+    account.login = newLogin.trim();
+    account.loginLower = nextLoginLower;
+  }
+  if (wantsPassword) {
+    account.passwordHash = hashPassword(newPassword);
+  }
+
+  saveAccounts(accounts);
+  res.json({ ok: true, login: account.login });
 });
 
 app.get('*', (_req, res) => {

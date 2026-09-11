@@ -6,7 +6,7 @@ import ChildDashboard from './components/ChildDashboard';
 import FamilyLogin from './components/FamilyLogin';
 import type { ActiveView } from './types';
 
-function AppInner({ familyLogin, onSwitchFamily }: { familyLogin: string; onSwitchFamily: () => void }) {
+function AppInner({ familyLogin, onSwitchFamily, onLoginChanged }: { familyLogin: string; onSwitchFamily: () => void; onLoginChanged: (login: string) => void }) {
   const [view, setView] = useState<ActiveView>('home');
   const [activeChildId, setActiveChildId] = useState<string | undefined>();
 
@@ -22,11 +22,17 @@ function AppInner({ familyLogin, onSwitchFamily }: { familyLogin: string; onSwit
 
   if (view === 'parent') return <ParentDashboard onLogout={handleLogout} />;
   if (view === 'child' && activeChildId) return <ChildDashboard childId={activeChildId} onLogout={handleLogout} />;
-  return <HomeScreen onSelect={handleSelect} familyLogin={familyLogin} onSwitchFamily={onSwitchFamily} />;
+  return <HomeScreen onSelect={handleSelect} familyLogin={familyLogin} onSwitchFamily={onSwitchFamily} onLoginChanged={onLoginChanged} />;
 }
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean>(() => !!getFamilyToken());
+  const [familyLogin, setFamilyLogin] = useState<string>(() => getFamilyLogin() ?? '');
+
+  function handleAuthed() {
+    setFamilyLogin(getFamilyLogin() ?? '');
+    setAuthed(true);
+  }
 
   function handleSwitchFamily() {
     clearFamilySession();
@@ -34,12 +40,12 @@ export default function App() {
   }
 
   if (!authed) {
-    return <FamilyLogin onAuthed={() => setAuthed(true)} />;
+    return <FamilyLogin onAuthed={handleAuthed} />;
   }
 
   return (
     <AppProvider onAuthError={handleSwitchFamily}>
-      <AppInner familyLogin={getFamilyLogin() ?? ''} onSwitchFamily={handleSwitchFamily} />
+      <AppInner familyLogin={familyLogin} onSwitchFamily={handleSwitchFamily} onLoginChanged={setFamilyLogin} />
     </AppProvider>
   );
 }

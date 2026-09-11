@@ -1,15 +1,18 @@
 import { useState } from 'react';
 import { useApp } from '../context';
 import type { ActiveView } from '../types';
+import AccountSettings from './AccountSettings';
 
 interface Props {
   onSelect: (view: ActiveView, childId?: string) => void;
   familyLogin?: string;
   onSwitchFamily?: () => void;
+  onLoginChanged?: (login: string) => void;
 }
 
-export default function HomeScreen({ onSelect, familyLogin, onSwitchFamily }: Props) {
+export default function HomeScreen({ onSelect, familyLogin, onSwitchFamily, onLoginChanged }: Props) {
   const { state, loaded, setParentPin } = useApp();
+  const [showSettings, setShowSettings] = useState(false);
   const [showParentPin, setShowParentPin] = useState(false);
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
@@ -69,6 +72,16 @@ export default function HomeScreen({ onSelect, familyLogin, onSwitchFamily }: Pr
           <p className="text-gray-500">Загрузка...</p>
         </div>
       </div>
+    );
+  }
+
+  if (showSettings) {
+    return (
+      <AccountSettings
+        currentLogin={familyLogin ?? ''}
+        onBack={() => setShowSettings(false)}
+        onLoginChanged={login => onLoginChanged?.(login)}
+      />
     );
   }
 
@@ -214,6 +227,8 @@ export default function HomeScreen({ onSelect, familyLogin, onSwitchFamily }: Pr
       {familyLogin && onSwitchFamily && (
         <div className="absolute top-4 right-4 text-xs text-gray-400 flex items-center gap-1.5">
           <span>Семья: {familyLogin}</span>
+          <button onClick={() => setShowSettings(true)} className="underline hover:text-gray-600 transition">настройки</button>
+          <span className="text-gray-300">·</span>
           <button onClick={onSwitchFamily} className="underline hover:text-gray-600 transition">сменить</button>
         </div>
       )}
