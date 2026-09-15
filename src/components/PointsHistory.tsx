@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../context';
-import { getScheduledDatesBefore, todayStr, fmtPts, parsePts } from '../utils';
+import { getScheduledDatesBefore, isAutoPenaltyWaived, isScheduledOn, todayStr, fmtPts, parsePts } from '../utils';
 import type { AppState, Task } from '../types';
 
 function rewardForDate(task: Task, date: string): number {
@@ -17,6 +17,26 @@ function penaltyForDate(task: Task, date: string): number {
     if (date < h.until) return h.penalty;
   }
   return task.penalty;
+}
+
+// The automatic missed-task penalty currently in force for a task on a given
+// day (0 if none). Used to preview which fine a task-linked correction reverts.
+function activeFineFor(task: Task, childId: string, date: string, state: AppState): number {
+  const perTask = task.recurrence === 'once' || task.reportAtEnd;
+  const today = todayStr();
+  if (perTask) {
+    if (!(task.endDate < today)) return 0;
+  } else {
+    if (!(date < today)) return 0;
+    if (!isScheduledOn(task, date)) return 0;
+  }
+  const penDate = perTask ? task.endDate : date;
+  const penalty = penaltyForDate(task, penDate);
+  if (penalty === 0) return 0;
+  const hasValid = perTask
+    ? state.completions.some(c => c.taskId === task.id && c.childId === childId && (c.approved === true || c.approved === null))
+    : state.completions.some(c => c.taskId === task.id && c.childId === childId && c.date === date && (c.approved === true || c.approved === null));
+  return hasValid ? 0 : penalty;
 }
 
 interface Entry {
@@ -91,7 +111,7 @@ function buildLedger(childId: string, state: AppState): Entry[] {
         const hasValid = state.completions.some(
           c => c.taskId === task.id && c.childId === childId && (c.approved === true || c.approved === null)
         );
-        if (!hasValid)
+        if (!hasValid && !isAutoPenaltyWaived(state.manualAdjustments, task, childId, task.endDate))
           entries.push({ type: 'auto_penalty', sortKey: task.endDate + 'T23:59:59', points: -penalty, label: task.title, date: task.endDate, note: 'не выполнено' });
       }
     } else {
@@ -101,7 +121,7 @@ function buildLedger(childId: string, state: AppState): Entry[] {
         const hasValid = state.completions.some(
           c => c.taskId === task.id && c.childId === childId && c.date === date && (c.approved === true || c.approved === null)
         );
-        if (!hasValid)
+        if (!hasValid && !isAutoPenaltyWaived(state.manualAdjustments, task, childId, date))
           entries.push({ type: 'auto_penalty', sortKey: date + 'T23:59:59', points: -penalty, label: task.title, date, note: 'пропущено' });
       }
     }
@@ -144,7 +164,8 @@ export default function PointsHistory({ childId }: Props) {
 
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [showCorrectionForm, setShowCorrectionForm] = useState(false);
-  const [corrAmount, setCorrAmount] = useState(0);
+  const [corrAmount, setCorrAmount] = useState(0); // magnitude only; sign lives in corrSign
+  const [corrSign, setCorrSign] = useState<1 | -1>(1);
   const [corrReason, setCorrReason] = useState('');
   const [corrTaskId, setCorrTaskId] = useState('');
   const [corrError, setCorrError] = useState('');
@@ -158,20 +179,27 @@ export default function PointsHistory({ childId }: Props) {
   const allEntries = buildLedger(childId, state);
   const entries = selectedDate ? allEntries.filter(e => e.date === selectedDate) : allEntries;
   const childTasks = state.tasks.filter(t => t.assignedTo.includes(childId));
+  const selectedTask = corrTaskId ? childTasks.find(t => t.id === corrTaskId) : undefined;
+  const fineToRevert = selectedTask && selectedDate ? activeFineFor(selectedTask, childId, selectedDate, state) : 0;
+
+  function resetCorrectionForm() {
+    setCorrAmount(0); setCorrSign(1); setCorrReason(''); setCorrTaskId(''); setCorrError('');
+  }
 
   function handleAddCorrection() {
     if (!selectedDate) return;
     if (!corrReason.trim()) { setCorrError('Укажите причину'); return; }
-    if (corrAmount === 0) { setCorrError('Сумма не может быть 0'); return; }
+    const amount = corrSign * corrAmount;
+    if (amount === 0) { setCorrError('Сумма не может быть 0'); return; }
     addManualAdjustment({
       childId,
-      amount: corrAmount,
+      amount,
       reason: corrReason.trim(),
       createdAt: new Date().toISOString(),
       forDate: selectedDate,
       ...(corrTaskId ? { taskId: corrTaskId } : {}),
     });
-    setCorrAmount(0); setCorrReason(''); setCorrTaskId(''); setCorrError('');
+    resetCorrectionForm();
     setShowCorrectionForm(false);
   }
 
@@ -239,7 +267,7 @@ export default function PointsHistory({ childId }: Props) {
 
         {selectedDate && !showCorrectionForm && (
           <button
-            onClick={() => setShowCorrectionForm(true)}
+            onClick={() => { resetCorrectionForm(); setShowCorrectionForm(true); }}
             className="mt-3 w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2 rounded-xl text-sm font-medium transition">
             + Добавить корректировку за {fmtDate(selectedDate)}
           </button>
@@ -250,29 +278,51 @@ export default function PointsHistory({ childId }: Props) {
             <div className="text-xs text-indigo-600 font-medium">Корректировка за {fmtDate(selectedDate)}</div>
             <div className="flex items-center gap-2">
               <label className="text-sm text-gray-500 whitespace-nowrap">Баллы:</label>
+              <button
+                type="button"
+                onClick={() => setCorrSign(s => (s === 1 ? -1 : 1))}
+                title={corrSign === -1 ? 'Отнять баллы' : 'Добавить баллы'}
+                className={`w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl border text-lg font-bold transition ${
+                  corrSign === -1
+                    ? 'border-red-300 bg-red-100 text-red-600 hover:bg-red-200'
+                    : 'border-green-300 bg-green-100 text-green-600 hover:bg-green-200'
+                }`}>
+                {corrSign === -1 ? '−' : '+'}
+              </button>
               <input
                 type="text" inputMode="numeric"
-                value={corrAmount === 0 ? '' : (corrAmount > 0 ? `+${fmtPts(corrAmount)}` : `-${fmtPts(-corrAmount)}`)}
+                value={corrAmount === 0 ? '' : fmtPts(corrAmount)}
                 onChange={e => {
                   const raw = e.target.value.trim();
-                  const negative = raw.startsWith('-');
-                  const n = parsePts(raw.replace(/^[+-]/, ''));
-                  setCorrAmount(negative ? -n : n);
+                  if (raw.startsWith('-')) setCorrSign(-1);
+                  else if (raw.startsWith('+')) setCorrSign(1);
+                  setCorrAmount(Math.abs(parsePts(raw)));
                 }}
-                placeholder="например -5 или +10"
-                className="w-32 border border-gray-200 rounded-xl px-3 py-1.5 text-sm outline-none focus:border-indigo-400"
+                placeholder="например 15"
+                className="w-24 border border-gray-200 rounded-xl px-3 py-1.5 text-sm outline-none focus:border-indigo-400"
               />
+              <span className="text-xs text-gray-400">{corrSign === -1 ? 'отнять' : 'добавить'}</span>
             </div>
             {childTasks.length > 0 && (
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Связано с заданием (необязательно)</label>
                 <select
                   value={corrTaskId}
-                  onChange={e => setCorrTaskId(e.target.value)}
+                  onChange={e => {
+                    const id = e.target.value;
+                    setCorrTaskId(id);
+                    const t = id ? childTasks.find(t => t.id === id) : undefined;
+                    if (t) { setCorrAmount(rewardForDate(t, selectedDate)); setCorrSign(1); }
+                  }}
                   className="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-sm outline-none focus:border-indigo-400 bg-white">
                   <option value="">— не выбрано —</option>
                   {childTasks.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
                 </select>
+                {fineToRevert > 0 && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    ⚡ Штраф за это задание (−{fineToRevert} ⭐) за этот день будет отменён.
+                  </p>
+                )}
               </div>
             )}
             <input
@@ -285,7 +335,7 @@ export default function PointsHistory({ childId }: Props) {
             {corrError && <p className="text-red-500 text-xs">{corrError}</p>}
             <div className="flex gap-2">
               <button
-                onClick={() => { setShowCorrectionForm(false); setCorrError(''); }}
+                onClick={() => { setShowCorrectionForm(false); resetCorrectionForm(); }}
                 className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 py-2 rounded-xl text-sm font-medium transition">
                 Отмена
               </button>

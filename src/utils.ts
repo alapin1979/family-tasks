@@ -1,4 +1,4 @@
-import type { Task } from './types';
+import type { ManualAdjustment, Task } from './types';
 
 export const DOW_LABELS: Record<number, string> = {
   1: 'Пн', 2: 'Вт', 3: 'Ср', 4: 'Чт', 5: 'Пт', 6: 'Сб', 0: 'Вс',
@@ -64,6 +64,26 @@ export function fmtPts(n: number): string {
 export function parsePts(s: string): number {
   const n = parseInt(s.replace(/[\s ]/g, ''), 10);
   return isNaN(n) ? 0 : n;
+}
+
+/**
+ * A correction linked to a task cancels ("reverts") that task's automatic
+ * missed-day penalty — the parent has taken manual control of the outcome.
+ * once / report-at-end tasks have a single penalty, so any linked correction
+ * waives it; recurring tasks are waived only for the correction's own day.
+ */
+export function isAutoPenaltyWaived(
+  adjustments: ManualAdjustment[] | undefined,
+  task: Task,
+  childId: string,
+  penaltyDate: string,
+): boolean {
+  const perTask = task.recurrence === 'once' || task.reportAtEnd;
+  return (adjustments ?? []).some(a =>
+    a.taskId === task.id &&
+    a.childId === childId &&
+    (perTask || (a.forDate ?? a.createdAt.split('T')[0]) === penaltyDate)
+  );
 }
 
 export function recurrenceLabel(task: Task): string {

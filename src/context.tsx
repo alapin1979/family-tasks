@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { AppState, Child, Task, TaskCompletion, Reward, RewardClaim, ManualPenalty, ManualAdjustment } from './types';
-import { getScheduledDatesBefore, todayStr } from './utils';
+import { getScheduledDatesBefore, isAutoPenaltyWaived, todayStr } from './utils';
 
 const defaultState: AppState = {
   parentPin: '',
@@ -457,7 +457,7 @@ export function AppProvider({ children: reactChildren, onAuthError }: { children
             const hasValid = state.completions.some(
               c => c.taskId === task.id && c.childId === childId && (c.approved === true || c.approved === null)
             );
-            if (!hasValid) total += penalty;
+            if (!hasValid && !isAutoPenaltyWaived(state.manualAdjustments, task, childId, task.endDate)) total += penalty;
           }
         } else {
           const scheduled = getScheduledDatesBefore(task, today);
@@ -467,7 +467,7 @@ export function AppProvider({ children: reactChildren, onAuthError }: { children
             const hasValid = state.completions.some(
               c => c.taskId === task.id && c.childId === childId && c.date === date && (c.approved === true || c.approved === null)
             );
-            if (!hasValid) total += penalty;
+            if (!hasValid && !isAutoPenaltyWaived(state.manualAdjustments, task, childId, date)) total += penalty;
           }
         }
       }
@@ -515,7 +515,7 @@ export function AppProvider({ children: reactChildren, onAuthError }: { children
             const hasValid = state.completions.some(
               c => c.taskId === task.id && c.childId === childId && (c.approved === true || c.approved === null)
             );
-            if (!hasValid) autoPenalty += penalty;
+            if (!hasValid && !isAutoPenaltyWaived(state.manualAdjustments, task, childId, task.endDate)) autoPenalty += penalty;
           }
         } else {
           const scheduled = getScheduledDatesBefore(task, today);
@@ -525,7 +525,7 @@ export function AppProvider({ children: reactChildren, onAuthError }: { children
             const hasValid = state.completions.some(
               c => c.taskId === task.id && c.childId === childId && c.date === date && (c.approved === true || c.approved === null)
             );
-            if (!hasValid) autoPenalty += penalty;
+            if (!hasValid && !isAutoPenaltyWaived(state.manualAdjustments, task, childId, date)) autoPenalty += penalty;
           }
         }
       }
