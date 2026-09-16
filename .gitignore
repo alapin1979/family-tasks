@@ -28,3 +28,10 @@ data/
 *.njsproj
 *.sln
 *.sw?
+
+# Xcode / Swift (apple/ native app)
+apple/**/xcuserdata/
+apple/**/*.xcuserstate
+apple/**/DerivedData/
+apple/build/
+.swiftpm/
